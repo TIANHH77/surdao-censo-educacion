@@ -6,6 +6,11 @@
 <p align="center"><b>Agente Analítico Híbrido — Telegram + Centro de Mando Territorial (Streamlit)</b></p>
 <p align="center">Datos sociodemográficos, educativos y censales de Chile (Censo 2024 + Mineduc)</p>
 
+<p align="center">
+  <a href="https://surdao-censo-educacion.streamlit.app/"><b>🌐 Ver Aplicación en Vivo (Streamlit Cloud)</b></a> • 
+  <a href="https://t.me/SurdaoBot"><b>🤖 Probar Bot de Telegram</b></a>
+</p>
+
 ---
 
 ## 💡 ¿Qué es Sur DAO 2.0?
@@ -14,10 +19,10 @@ Sur DAO 2.0 es un agente conversacional que combina un **datamart de 60+ tablas*
 
 Disponible en dos interfaces que comparten el mismo agente (`agent_core.py`):
 
-- 📱 **Telegram** (`telegram_bot.py`) — conversación natural con memoria por chat, caché de respuestas y comando `/buscar` para explorar el datamart.
-- 🖥️ **Streamlit** (`app.py`) — chat web con mapa geográfico interactivo (`pydeck`) de establecimientos educacionales por comuna.
+- 📱 **Telegram** ([@SurdaoBot](https://t.me/SurdaoBot)) — conversación natural con memoria por chat, caché de respuestas y comando `/buscar` para explorar el datamart.
+- 🖥️ **Streamlit** ([App en Vivo](https://surdao-censo-educacion.streamlit.app/)) — chat web con mapa geográfico interactivo (`pydeck`) de establecimientos educacionales por comuna.
 
-> 🚀 **Estado del Proyecto:** Validado en entorno local y con un Datamart optimizado (archivos `.parquet` <2MB) que permite su despliegue nativo y gratuito en la nube (Streamlit Cloud).
+> 🚀 **Estado del Proyecto:** Validado en entorno local y desplegado en producción en Streamlit Cloud con un Datamart optimizado (archivos `.parquet` <2MB).
 
 ---
 
