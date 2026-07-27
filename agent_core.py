@@ -22,7 +22,7 @@ def get_llm():
     from dotenv import load_dotenv
     load_dotenv()
 
-    usar_nube = False  # 🔥 Cambia a True si quieres usar OpenRouter
+    usar_nube = True  # 🔥 Cambia a True si quieres usar OpenRouter
 
     if usar_nube and os.environ.get("OPENROUTER_API_KEY"):
         os.environ["OPENAI_API_KEY"] = os.environ.get("OPENROUTER_API_KEY")
