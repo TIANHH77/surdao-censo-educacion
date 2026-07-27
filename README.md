@@ -61,11 +61,18 @@ graph TD
 
 ## 🗄️ Datamart (`data/`)
 
-Más de 60 archivos parquet estandarizados, agrupados en tres familias:
-
-- **Demografía e indicadores Censo 2024:** envejecimiento (D2), población por sexo (D1), fecundidad (D6), migración internacional e interna (D4, D5).
-- **Diversidad y cuidados:** discapacidad por tipo y severidad (P1), pueblos originarios y lenguas (P2-P4), alfabetización y nivel educativo (P7), escolaridad de inmigrantes (P8).
-- **Histórico educativo:** matrícula, rendimiento y plantas docentes (2012-2025) georreferenciados, para todos los establecimientos de básica y media de Chile.
+surdao-censo-educacion/
+├── app.py
+├── telegram_bot.py
+├── agent_core.py
+├── requirements.txt
+└── data/
+    ├── manual_uso_microdatos_censo2024.pdf
+    ├── educacion_historico_2012_2023.parquet
+    ├── educacion_censo_2024.parquet
+    ├── dataset_auditoria_final.parquet
+    ├── D1_a_D6_*.parquet    # 20+ tablas demográficas (Edad, Sexo, Migración, Fecundidad)
+    └── P1_a_P8_*.parquet    # 35+ tablas de diversidad (Discapacidad, Escolaridad, Pueblos)
 
 ## 🚀 Instalación y ejecución local
 

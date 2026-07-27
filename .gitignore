@@ -13,10 +13,6 @@ __pycache__/
 .env
 *.key
 
-# Datos (pesados / no versionar en GitHub)
-data/*.parquet
-data/*.pdf
-
 # Streamlit
 .streamlit/secrets.toml
 
@@ -29,3 +25,4 @@ vectorstore/
 .DS_Store
 .vscode/
 .idea/
+scripts/
