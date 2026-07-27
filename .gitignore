@@ -1,0 +1,31 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Variables de entorno / claves
+.env
+*.key
+
+# Datos (pesados / no versionar en GitHub)
+data/*.parquet
+data/*.pdf
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Índices vectoriales generados (FAISS)
+*.faiss
+*.pkl
+vectorstore/
+
+# Sistema operativo / editor
+.DS_Store
+.vscode/
+.idea/
