@@ -16,28 +16,29 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ============================================================
 # ============================================================
-# 1. CONFIGURACIÓN DEL LLM (LOCAL / NUBE INTELIGENTE)
+# ============================================================
+# 1. CONFIGURACIÓN DEL LLM (LOCAL / NUBE)
 # ============================================================
 def get_llm():
-    """Detecta automáticamente si debe usar OpenRouter (en la nube) o el entorno local"""
+    """Interruptor único para alternar entre entorno local y nube"""
     from dotenv import load_dotenv
     load_dotenv()
 
-    # Si existe la clave de OpenRouter (configurada en Streamlit Secrets o en tu .env local)
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-    
-    if openrouter_key:
-        os.environ["OPENAI_API_KEY"] = openrouter_key
+    # 🔀 INTERRUPTOR PRINCIPAL: 
+    # Cambia a False para trabajar en tu PC (OmniRoute)
+    # Cambia a True cuando subas o uses la nube (OpenRouter)
+    usar_nube = False  
+
+    if usar_nube:
+        os.environ["OPENAI_API_KEY"] = os.environ.get("OPENROUTER_API_KEY", "")
         os.environ["OPENAI_API_BASE"] = "https://openrouter.ai/api/v1"
-        # Usamos el enrutador universal gratuito para evitar errores 404 por rotación de modelos
-        modelo_activo = "openrouter/free"
-        print("🌐 Usando OpenRouter (Modo Nube)")
+        modelo_activo = "deepseek/deepseek-chat-v3:free"
+        print("🌐 Modo activo: NUBE (OpenRouter)")
     else:
-        # Modo local por defecto (OmniRoute / Ollama en tu PC)
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
         os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        modelo_activo = "meta-llama/llama-3.3-70b-instruct:free"  # O el nombre de tu modelo local habitual
-        print("💻 Usando entorno Local")
+        modelo_activo = "openrouter/free"
+        print("💻 Modo activo: LOCAL (OmniRoute)")
 
     return ChatOpenAI(model=modelo_activo, temperature=0)
 
