@@ -36,12 +36,11 @@ def get_llm():
         # Modo local por defecto (OmniRoute / Ollama en tu PC)
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
         os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        modelo_activo = "openrouter/free"  # O el nombre de tu modelo local habitual
+        modelo_activo = "meta-llama/llama-3.3-70b-instruct:free"  # O el nombre de tu modelo local habitual
         print("💻 Usando entorno Local")
 
     return ChatOpenAI(model=modelo_activo, temperature=0)
 
-    return ChatOpenAI(model=modelo_activo, temperature=0)
 
 # ============================================================
 # 2. RAG (MANUAL DEL CENSO)
