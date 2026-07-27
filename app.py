@@ -20,8 +20,6 @@ def cargar_datamart_completo():
     dfs = {}
     ruta_carpeta = "data"
 
-    print(f"🚀 Iniciando carga masiva desde: {ruta_carpeta}")
-
     if not os.path.exists(ruta_carpeta):
         st.error(f"❌ ¡Alerta! La carpeta '{ruta_carpeta}' no existe. Revisa la ruta.")
         return dfs
@@ -51,10 +49,19 @@ def cargar_datamart_completo():
         except Exception as e:
             print(f"⚠️ Error cargando {archivo}: {e}")
 
-    print(f"\n🔥 DATAMART LISTO: {len(dfs)} tablas activas en memoria RAM.")
     return dfs
 
 diccionario_dfs = cargar_datamart_completo()
+
+# ==========================================
+# INICIALIZACIÓN ÚNICA DEL AGENTE Y RAG (Caché de alto rendimiento)
+# ==========================================
+@st.cache_resource
+def inicializar_cerebro_agente(dfs):
+    print("🧠 Inicializando agente y RAG por única vez...")
+    return create_surdao_agent(dfs)
+
+agente = inicializar_cerebro_agente(diccionario_dfs)
 
 # ==========================================
 # FUNCIONES AUXILIARES
@@ -196,7 +203,7 @@ if st.session_state.sugerencias_mostradas and st.session_state.ultima_pregunta_c
 # ==========================================
 for msg in st.session_state.mensajes:
     with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+        st.markdown(msg["content"])  # 🔥 Renderizado limpio con Markdown
 
 pregunta = st.chat_input("Pregúntale al Agente (ej: 'Datos de Sierra Gorda')")
 
@@ -204,14 +211,12 @@ if pregunta:
     st.session_state.sugerencias_mostradas = False
     st.session_state.mensajes.append({"role": "user", "content": pregunta})
     with st.chat_message("user"):
-        st.write(pregunta)
+        st.markdown(pregunta)
 
     chat_history = [
         HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"])
         for m in st.session_state.mensajes[:-1]
     ]
-
-    agente = create_surdao_agent(diccionario_dfs)
 
     with st.spinner("🧠 Procesando consulta..."):
         try:
@@ -233,7 +238,7 @@ if pregunta:
 
             st.session_state.mensajes.append({"role": "assistant", "content": output_final})
             with st.chat_message("assistant"):
-                st.write(output_final)
+                st.markdown(output_final)
 
             if not es_compleja:
                 comuna_detectada = detectar_comuna_en_texto(pregunta)
@@ -264,10 +269,10 @@ if pregunta:
                 st.session_state.ultima_pregunta_compleja = pregunta
                 st.session_state.sugerencias_mostradas = True
                 with st.chat_message("assistant"):
-                    st.write(
+                    st.markdown(
                         "🔄 **Consulta muy completa.** Revisa las sugerencias abajo 👇 "
                         "para dividirla en partes más simples."
                     )
             else:
                 with st.chat_message("assistant"):
-                    st.write(f"💥 Algo salió mal: {error_msg[:100]}. ¿Puedes reformular?")
+                    st.markdown(f"💥 Algo salió mal: {error_msg[:100]}. ¿Puedes reformular?")
