@@ -17,6 +17,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 # ============================================================
 # ============================================================
 # ============================================================
+# ============================================================
 # 1. CONFIGURACIÓN DEL LLM (LOCAL / NUBE)
 # ============================================================
 def get_llm():
@@ -37,7 +38,8 @@ def get_llm():
     else:
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
         os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        modelo_activo = "openrouter/free"
+        # Usamos un modelo válido de la pasarela local
+        modelo_activo = "openrouter/openai/gpt-oss-20b:free"
         print("💻 Modo activo: LOCAL (OmniRoute)")
 
     return ChatOpenAI(model=modelo_activo, temperature=0)
