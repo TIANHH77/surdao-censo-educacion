@@ -27,7 +27,7 @@ def get_llm():
     if usar_nube and os.environ.get("OPENROUTER_API_KEY"):
         os.environ["OPENAI_API_KEY"] = os.environ.get("OPENROUTER_API_KEY")
         os.environ["OPENAI_API_BASE"] = "https://openrouter.ai/api/v1"
-        modelo_activo = "google/gemma-7b-it:free" 
+        modelo_activo = "meta-llama/llama-3-8b-instruct:free" 
     else:
         # 🔥 OmniRoute local
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
