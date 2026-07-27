@@ -15,24 +15,31 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ============================================================
-# 1. CONFIGURACIÓN DEL LLM (LOCAL / NUBE)
+# ============================================================
+# 1. CONFIGURACIÓN DEL LLM (LOCAL / NUBE INTELIGENTE)
 # ============================================================
 def get_llm():
-    """Detecta si estamos en local (Omniroute) o en la nube (OpenRouter)"""
+    """Detecta automáticamente si debe usar OpenRouter (en la nube) o el entorno local"""
     from dotenv import load_dotenv
     load_dotenv()
 
-    usar_nube = True  # 🔥 Cambia a True si quieres usar OpenRouter
-
-    if usar_nube and os.environ.get("OPENROUTER_API_KEY"):
-        os.environ["OPENAI_API_KEY"] = os.environ.get("OPENROUTER_API_KEY")
+    # Si existe la clave de OpenRouter (configurada en Streamlit Secrets o en tu .env local)
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    
+    if openrouter_key:
+        os.environ["OPENAI_API_KEY"] = openrouter_key
         os.environ["OPENAI_API_BASE"] = "https://openrouter.ai/api/v1"
-        modelo_activo = "meta-llama/llama-3-8b-instruct:free" 
+        # Usamos el enrutador universal gratuito para evitar errores 404 por rotación de modelos
+        modelo_activo = "openrouter/free"
+        print("🌐 Usando OpenRouter (Modo Nube)")
     else:
-        # 🔥 OmniRoute local
+        # Modo local por defecto (OmniRoute / Ollama en tu PC)
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
         os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        modelo_activo = "openrouter/free"
+        modelo_activo = "openrouter/free"  # O el nombre de tu modelo local habitual
+        print("💻 Usando entorno Local")
+
+    return ChatOpenAI(model=modelo_activo, temperature=0)
 
     return ChatOpenAI(model=modelo_activo, temperature=0)
 
