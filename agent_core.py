@@ -15,30 +15,27 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ============================================================
-# ============================================================
-# ============================================================
-# ============================================================
-# 1. CONFIGURACIÓN DEL LLM (LOCAL / NUBE)
+## ============================================================
+# 1. CONFIGURACIÓN DEL LLM (LOCAL vs NUBE AUTOMÁTICO)
 # ============================================================
 def get_llm():
-    """Interruptor único para alternar entre entorno local y nube"""
+    """Detecta automáticamente si corre en Streamlit Cloud o en local"""
     from dotenv import load_dotenv
     load_dotenv()
 
-    # 🔀 INTERRUPTOR PRINCIPAL: 
-    # Cambia a False para trabajar en tu PC (OmniRoute)
-    # Cambia a True cuando subas o uses la nube (OpenRouter)
-    usar_nube = False  
+    # Si estamos en Streamlit Cloud (o hay una variable de entorno de la nube), usa OpenRouter
+    # De lo contrario, usa tu OmniRoute local
+    es_nube = "STREAMLIT_SHARING_MODE" in os.environ or os.environ.get("USAR_NUBE", "false").lower() == "true"
 
-    if usar_nube:
+    if es_nube:
         os.environ["OPENAI_API_KEY"] = os.environ.get("OPENROUTER_API_KEY", "")
         os.environ["OPENAI_API_BASE"] = "https://openrouter.ai/api/v1"
-        modelo_activo = "deepseek/deepseek-chat-v3:free"
+        # Usamos un modelo válido y activo de tu JSON listado
+        modelo_activo = "openrouter/openai/gpt-oss-20b:free"
         print("🌐 Modo activo: NUBE (OpenRouter)")
     else:
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
         os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        # Usamos un modelo válido de la pasarela local
         modelo_activo = "openrouter/openai/gpt-oss-20b:free"
         print("💻 Modo activo: LOCAL (OmniRoute)")
 
