@@ -32,7 +32,7 @@ def get_llm():
         # 🔥 OmniRoute local
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
         os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        modelo_activo = "oc/deepseek-v4-flash-free" 
+        modelo_activo = "deepseek/deepseek-chat" 
 
     return ChatOpenAI(model=modelo_activo, temperature=0)
 
