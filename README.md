@@ -1,86 +1,114 @@
-# 🤖 Sur DAO 2.0 — Motor de Datos Híbrido
+<p align="center">
+  <img src="assets/surdao.svg" alt="Sur DAO Logo" width="250">
+</p>
 
-Proyecto final para el desafío de **Alura Latam**. Un agente analítico construido con **Streamlit** y **LangChain** que combina dos capacidades sobre datos educativos:
+<h1 align="center">🏔️ Sur DAO 2.0</h1>
+<p align="center"><b>Agente Analítico Híbrido — Telegram + Centro de Mando Territorial (Streamlit)</b></p>
+<p align="center">Datos sociodemográficos, educativos y censales de Chile (Censo 2024 + Mineduc)</p>
 
-1. **Análisis cuantitativo** sobre series históricas de datos educativos (2012–2023) y la matriz educativa 2024 + Censo, usando pandas.
-2. **Consulta metodológica (RAG)** sobre el Manual de Uso de Microdatos del Censo 2024, para responder preguntas sobre definiciones y variables oficiales.
+---
 
-El agente decide de forma autónoma qué herramienta usar según la pregunta: cálculos numéricos → pandas; dudas conceptuales/metodológicas → búsqueda semántica sobre el manual.
+## 💡 ¿Qué es Sur DAO 2.0?
 
-## 🧠 Arquitectura
+Sur DAO 2.0 es un agente conversacional que combina un **datamart de 60+ tablas** (microdatos oficiales del Censo 2024 del INE y series históricas educativas del Mineduc, 2012-2025) con un LLM capaz de escribir y ejecutar código Python/pandas en memoria para responder preguntas con datos reales, no con texto genérico.
 
-- **Frontend / UI:** Streamlit (`st.chat_input`, `st.chat_message`)
-- **Orquestación del agente:** LangChain (`langchain.agents`)
-- **Modelo de lenguaje:** configurable vía OpenAI-compatible endpoint (Omniroute) — soporta también Google Gemini, Groq y Ollama según se configure
-- **Cálculo sobre datos:** `PythonAstREPLTool` ejecutando pandas contra DataFrames cargados en memoria (Parquet)
-- **RAG:** `PyPDFLoader` + `RecursiveCharacterTextSplitter` + `HuggingFaceEmbeddings` (`all-MiniLM-L6-v2`) + `FAISS`
+Disponible en dos interfaces que comparten el mismo agente (`agent_core.py`):
 
-## 📁 Estructura del proyecto
+- 📱 **Telegram** (`telegram_bot.py`) — conversación natural con memoria por chat, caché de respuestas y comando `/buscar` para explorar el datamart.
+- 🖥️ **Streamlit** (`app.py`) — chat web con mapa geográfico interactivo (`pydeck`) de establecimientos educacionales por comuna.
 
+> 🚀 **Estado del Proyecto:** Validado en entorno local y con un Datamart optimizado (archivos `.parquet` <2MB) que permite su despliegue nativo y gratuito en la nube (Streamlit Cloud).
+
+---
+
+## 🏗️ Arquitectura
+
+```mermaid
+graph TD
+    U[Usuario] -->|Consulta natural| I[Telegram o Streamlit]
+    I -->|input + historial| A[AgentExecutor - LangChain]
+    A -->|Elige herramienta| H{Tools}
+    H -->|Cálculo/cruce de datos| P[ejecutar_pandas - PythonAstREPLTool]
+    H -->|No sabe qué tabla usar| B[buscar_tablas_en_datamart]
+    H -->|Duda metodológica| R[consultar_manual_censo - RAG/FAISS]
+    P --> D[(60+ tablas parquet en memoria)]
+    R --> M[(Manual Censo 2024 vectorizado)]
+    A -->|Respuesta| I
 ```
-Surdao_MVP/
-├── app.py
-├── requirements.txt
-├── .gitignore
-├── data/
-│   ├── educacion_historico_2012_2023.parquet
-│   ├── educacion_censo_2024.parquet
-│   └── manual_uso_microdatos_censo2024.pdf
-└── README.md
-```
 
-> ⚠️ La carpeta `data/` **no se versiona** en este repositorio (ver `.gitignore`) por el peso de los archivos. Cada usuario debe colocar sus propios archivos ahí antes de correr la app — ver sección de Fuente de Datos.
+### 🤖 Agente analítico
+- **Ejecución en memoria:** `PythonAstREPLTool` dentro de un `ThreadPoolExecutor` con timeout de 30s, para que una consulta pesada no cuelgue el chat.
+- **Caché con TTL de 24h:** respuestas repetidas se sirven al instante vía hash MD5 de la pregunta.
+- **Manejo de consultas complejas:** si una pregunta requiere demasiados pasos, el agente lo detecta y sugiere subpreguntas más acotadas en vez de fallar en silencio.
+- **Buscador de tablas:** cuando no sabe en qué tabla está un dato, usa `buscar_tablas_en_datamart` para explorarlo por palabra clave antes de responder.
 
-## 🚀 Instalación
+### 🖥️ Centro de mando (Streamlit)
+- Barra lateral con buscador de las 60+ tablas activas en memoria.
+- Mapa geográfico automático: al preguntar por una comuna, extrae las coordenadas de sus establecimientos y las renderiza en un mapa interactivo (`pydeck`).
+
+---
+
+## ⚙️ Stack Tecnológico
+
+| Capa | Tecnología | Propósito |
+|---|---|---|
+| Orquestación del agente | `LangChain` (`create_tool_calling_agent` + `AgentExecutor`) | Razonamiento y selección de herramientas |
+| Modelo de lenguaje | Endpoint OpenAI-compatible (Omniroute local u OpenRouter en la nube) | Generación de respuestas y código |
+| Análisis de datos | `pandas` + `PythonAstREPLTool` | Cálculos sobre las tablas en memoria |
+| RAG | `FAISS` + `HuggingFaceEmbeddings` (`all-MiniLM-L6-v2`) | Búsqueda semántica sobre el manual del Censo |
+| Interfaz móvil | `python-telegram-bot` (polling) | Bot con memoria de conversación y caché |
+| Interfaz web | `Streamlit` + `pydeck` | Chat y mapa geográfico interactivo |
+
+## 🗄️ Datamart (`data/`)
+
+Más de 60 archivos parquet estandarizados, agrupados en tres familias:
+
+- **Demografía e indicadores Censo 2024:** envejecimiento (D2), población por sexo (D1), fecundidad (D6), migración internacional e interna (D4, D5).
+- **Diversidad y cuidados:** discapacidad por tipo y severidad (P1), pueblos originarios y lenguas (P2-P4), alfabetización y nivel educativo (P7), escolaridad de inmigrantes (P8).
+- **Histórico educativo:** matrícula, rendimiento y plantas docentes (2012-2025) georreferenciados, para todos los establecimientos de básica y media de Chile.
+
+## 🚀 Instalación y ejecución local
+
+Requiere **Python 3.11** (el stack de LangChain usado no es compatible con Python 3.13+).
 
 ```bash
-# 1. Clonar el repo
-git clone https://github.com/<tu-usuario>/Surdao_MVP.git
-cd Surdao_MVP
+# 1. Clonar el repositorio
+git clone https://github.com/<tu-usuario>/surdao-censo-educacion.git
+cd surdao-censo-educacion
 
-# 2. Crear y activar entorno virtual
-python -m venv venv
+# 2. Crear y activar entorno virtual con Python 3.11
+py -3.11 -m venv venv
 venv\Scripts\activate      # Windows
 # source venv/bin/activate # Linux / Mac
 
 # 3. Instalar dependencias
 pip install -r requirements.txt
 
-# 4. Colocar los datos en la carpeta data/ (ver Fuente de Datos)
+# 4. Crear un archivo .env (NO lo subas al repo) con:
+#    TELEGRAM_BOT_TOKEN="tu_token_de_telegram"
+#    OPENAI_API_KEY="tu_api_key_o_proveedor"
 
-# 5. Correr la app
+# 5a. Iniciar la app web
 streamlit run app.py
+
+# 5b. Iniciar el bot de Telegram (en otra terminal)
+python telegram_bot.py
 ```
 
-## 📊 Fuente de datos
+## 💬 Ejemplo real de uso
 
-Datos abiertos oficiales de organismos públicos de Chile:
+Recorrido comparativo entre Isla de Pascua y Juan Fernández hecho por el agente en una sola conversación de Telegram: demografía, discapacidad por tipo (visual, auditiva, motora, cognitiva), migración interna e internacional, escolaridad de inmigrantes vs. población local, asistencia educativa por nivel, y fecundidad — todo cruzando datos reales del datamart sin intervención manual.
 
-**Educación (Mineduc — Datos Abiertos):**
-- [Matrícula por estudiante](https://datosabiertos.mineduc.cl/matricula-por-estudiante-2/) (2004–2025)
-- [Rendimiento académico por estudiante](https://datosabiertos.mineduc.cl/rendimiento-por-estudiante-2/) (2002–2025)
-- [Asistencia declarada mensual](https://datosabiertos.mineduc.cl/asistencia-declarada-mensual-2/) (2011–2025)
-- [Notas y egresados de enseñanza media](https://datosabiertos.mineduc.cl/notas-y-egresados-de-ensenanza-media/) (2002–2024)
-- [Directorio de Establecimientos Educacionales](https://datosabiertos.mineduc.cl/directorio-de-establecimientos-educacionales/) (1992–2025)
-- Ver listado completo de fuentes utilizadas en `REFERENCIAS_SURDAO.xlsx` (uso interno, no versionado en el repo)
+## 🌍 Origen y filosofía
 
-**Censo 2024 (INE Chile):**
-- Manual de uso de microdatos: [completar con el link exacto que usaste de censo2024.ine.gob.cl]
+Todo el análisis se construye sobre **datos públicos oficiales** (INE, Mineduc) con herramientas gratuitas o de código abierto — el objetivo es que cualquiera pueda clonar este repositorio y levantar su propio centro de análisis territorial sin costo de licencias, usando modelos de LLM en capas gratuitas (Omniroute local u OpenRouter).
 
-> En toda publicación basada en datos de organismos oficiales de estadística, corresponde citar la fuente primaria de los datos (Mineduc / INE Chile).
+## 🗺️ Roadmap
 
-## 💬 Ejemplos de uso
-
-- *"¿Cuántos alumnos había matriculados en nivel primario en 2020?"* → el agente usa `ejecutar_pandas`.
-- *"Según el manual, ¿cómo se define el déficit habitacional?"* → el agente usa `consultar_manual_censo`.
-
-## 🛠️ Tecnologías
-
-`Python` · `Streamlit` · `LangChain` · `Pandas` · `FAISS` · `Sentence-Transformers` · `PyPDF`
+- Despliegue público (Streamlit Community Cloud + bot de Telegram siempre activo).
+- Ampliar el datamart con salud, vivienda o matriz económica.
+- Seguimiento longitudinal de cohortes de estudiantes.
 
 ## 👤 Autor
 
 Proyecto desarrollado como desafío final del programa de **Alura Latam**.
-
----
-*Este proyecto trabaja con datos educativos y censales oficiales con fines de análisis y aprendizaje.*
