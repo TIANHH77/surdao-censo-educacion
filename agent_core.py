@@ -15,12 +15,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ============================================================
+# ============================================================
 # 1. CONFIGURACIÓN DEL LLM (Múltiples modelos para Fallback)
 # ============================================================
 MODELOS_NUBE_FALLBACK = [
-    "openai/gpt-oss-20b:free",
-    "google/gemma-2-9b-it:free",
-    "meta-llama/llama-3.1-8b-instruct:free",
+    "google/gemma-2-9b-it:free",        # Excelente para razonamiento
+    "mistralai/mistral-7b-instruct:free", # Rápido y muy estable
+    "qwen/qwen-2-7b-instruct:free",       # Muy buen manejo de código y datos
 ]
 
 MODELO_LOCAL = "oc/deepseek-v4-flash-free"  # Alias real en tu OmniRoute
