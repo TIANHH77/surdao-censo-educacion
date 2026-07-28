@@ -24,6 +24,13 @@ Disponible en dos interfaces que comparten el mismo agente (`agent_core.py`):
 
 > 🚀 **Estado del Proyecto:** Validado en entorno local y desplegado en producción en Streamlit Cloud con un Datamart optimizado (archivos `.parquet` <2MB).
 
+### 🎥 Demostración del Proyecto
+Puedes revisar el video explicativo del funcionamiento del bot y del agente en el siguiente enlace:
+
+👉 [Ver video demostrativo en Google Drive](https://drive.google.com/file/d/1OwauDaVPHrq276w4QE-g8GWnOKOHVI3I/view?usp=sharing)
+
+👉 [Ver video demostrativo en Google Drive](https://drive.google.com/file/d/1P5U1C_74y6w4o9YXqFHRmDjRXSznCD1k/view?usp=sharing)
+
 ---
 
 ## 🏗️ Arquitectura
@@ -85,7 +92,7 @@ Requiere **Python 3.11** (el stack de LangChain usado no es compatible con Pytho
 
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/<tu-usuario>/surdao-censo-educacion.git
+git clone https://github.com/tianhh77/surdao-censo-educacion.git
 cd surdao-censo-educacion
 
 # 2. Crear y activar entorno virtual con Python 3.11
