@@ -1,5 +1,4 @@
 import os
-import signal
 import pandas as pd
 import concurrent.futures
 from langchain_openai import ChatOpenAI
@@ -7,6 +6,7 @@ from langchain_experimental.tools.python.tool import PythonAstREPLTool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
+from langchain_core.documents import Document
 
 # RAG Imports
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -15,81 +15,64 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ============================================================
-## ============================================================
+# 1. CONFIGURACIÓN DEL LLM (Múltiples modelos para Fallback)
 # ============================================================
-# 1. CONFIGURACIÓN DEL LLM (LOCAL vs NUBE AUTOMÁTICO)
-# ============================================================
-def get_llm():
-    """Detecta automáticamente si corre en Streamlit Cloud o en local mediante secrets"""
+MODELOS_NUBE_FALLBACK = [
+    "openai/gpt-oss-20b:free",
+    "google/gemma-2-9b-it:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+]
+
+MODELO_LOCAL = "oc/deepseek-v4-flash-free"  # Alias real en tu OmniRoute
+
+def get_llms():
+    """Devuelve una LISTA de instancias ChatOpenAI en orden de preferencia."""
     from dotenv import load_dotenv
     load_dotenv()
 
-    # Detección EXPLÍCITA: si existe una key de OpenRouter en secrets/env, usamos nube.
     openrouter_key = None
     try:
         import streamlit as st
         openrouter_key = st.secrets.get("OPENROUTER_API_KEY")
     except Exception:
         pass
-    
     openrouter_key = openrouter_key or os.environ.get("OPENROUTER_API_KEY")
 
     if openrouter_key:
         os.environ["OPENAI_API_KEY"] = openrouter_key
         os.environ["OPENAI_API_BASE"] = "https://openrouter.ai/api/v1"
-        
-        # 1. Definimos el modelo principal en la nube (sin el prefijo "openrouter/")
-        llm_principal = ChatOpenAI(model="openai/gpt-oss-20b:free", temperature=0, timeout=45)
-        
-        # 2. Definimos los modelos de respaldo (si el principal falla o satura, salta al siguiente)
-        llm_respaldo_1 = ChatOpenAI(model="google/gemma-2-9b-it:free", temperature=0, timeout=45)
-        llm_respaldo_2 = ChatOpenAI(model="meta-llama/llama-3.1-8b-instruct:free", temperature=0, timeout=45)
-        
-        print("🌐 Modo activo: NUBE (OpenRouter) con Fallbacks")
-        # Retornamos el modelo con su cadena de supervivencia
-        return llm_principal.with_fallbacks([llm_respaldo_1, llm_respaldo_2])
-
+        print("🌐 Modo activo: NUBE (OpenRouter) con fallback por reintento")
+        return [ChatOpenAI(model=m, temperature=0, timeout=45) for m in MODELOS_NUBE_FALLBACK]
     else:
-        # En LOCAL, OmniRoute gestiona el fallback por su cuenta
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
         os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        print("💻 Modo activo: LOCAL (OmniRoute gestiona el balanceo)")
-        
-        return ChatOpenAI(model="openrouter/openai/gpt-oss-20b:free", temperature=0, timeout=45)
-
+        print("💻 Modo activo: LOCAL (OmniRoute)")
+        return [ChatOpenAI(model=MODELO_LOCAL, temperature=0, timeout=45)]
 
 # ============================================================
 # 2. RAG (MANUAL DEL CENSO)
 # ============================================================
 def get_rag_tool():
-    """Construye la herramienta de búsqueda en el manual del Censo 2024"""
     docs = []
-
-    # 1. Manual en PDF
     pdf_path = "data/manual_uso_microdatos_censo2024.pdf"
     if os.path.exists(pdf_path):
         try:
             loader_pdf = PyPDFLoader(pdf_path)
             docs.extend(loader_pdf.load())
-            print(f"✅ PDF cargado: {pdf_path}")
         except Exception as e:
             print(f"⚠️ Error cargando PDF: {e}")
 
-    # 2. Diccionario de columnas en Markdown
     md_path = "data/columnas_totales.md"
     if os.path.exists(md_path):
         try:
             loader_md = TextLoader(md_path, encoding="utf-8")
             docs.extend(loader_md.load())
-            print(f"✅ Markdown cargado: {md_path}")
         except Exception as e:
             print(f"⚠️ Error cargando Markdown: {e}")
 
     if not docs:
-        print("⚠️ No se encontraron documentos para RAG.")
         return None
 
-    # Chunking y vectorización
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     splits = text_splitter.split_documents(docs)
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
@@ -98,7 +81,7 @@ def get_rag_tool():
 
     @tool
     def consultar_manual_censo(query: str) -> str:
-        """Úsala EXCLUSIVAMENTE para definiciones metodológicas, fórmulas o contexto del Censo 2024. NO la uses para obtener datos, para eso usa 'ejecutar_pandas'."""
+        """Úsala EXCLUSIVAMENTE para definiciones metodológicas, fórmulas o contexto del Censo 2024."""
         resultados = retriever.invoke(query)
         contexto = "\n\n---\n\n".join([doc.page_content for doc in resultados])
         return f"📚 Información del Manual Censo 2024:\n{contexto}"
@@ -106,22 +89,89 @@ def get_rag_tool():
     return consultar_manual_censo
 
 # ============================================================
-# 3. FÁBRICA DEL AGENTE PRINCIPAL
+# 3. ÍNDICE SEMÁNTICO DE TABLAS (BÚSQUEDA HÍBRIDA)
+# ============================================================
+def construir_indice_tablas(dfs: dict):
+    documentos = []
+    for nombre, df in dfs.items():
+        columnas_texto = ", ".join(str(c) for c in df.columns)
+        contenido = f"Tabla: {nombre}. Contiene las columnas: {columnas_texto}"
+        documentos.append(
+            Document(
+                page_content=contenido,
+                metadata={"nombre_tabla": nombre, "filas": df.shape[0], "columnas": list(df.columns)},
+            )
+        )
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    return FAISS.from_documents(documentos, embeddings)
+
+def crear_tool_busqueda_hibrida(dfs: dict, indice_semantico):
+    @tool
+    def buscar_tablas_en_datamart(consulta: str) -> str:
+        """Encuentra qué tablas del datamart son relevantes para un tema."""
+        consulta_lower = consulta.lower()
+        exactas = []
+        for nombre, df in dfs.items():
+            if consulta_lower in nombre.lower() or any(consulta_lower in str(c).lower() for c in df.columns):
+                exactas.append(f"📁 **{nombre}** ({df.shape[0]:,} filas) — coincidencia exacta")
+
+        if exactas:
+            return "🔎 Tablas encontradas (coincidencia exacta):\n" + "\n".join(exactas[:8])
+
+        resultados = indice_semantico.similarity_search(consulta, k=5)
+        if not resultados:
+            return f"❌ No encontré tablas relacionadas con '{consulta}'."
+
+        lineas = []
+        for doc in resultados:
+            nombre = doc.metadata["nombre_tabla"]
+            filas = doc.metadata["filas"]
+            columnas_muestra = ", ".join(doc.metadata["columnas"][:5])
+            lineas.append(f"📁 **{nombre}** ({filas:,} filas) — columnas: {columnas_muestra}...")
+
+        return "🔎 Tablas más relevantes (búsqueda semántica):\n" + "\n".join(lineas)
+
+    return buscar_tablas_en_datamart
+
+# ============================================================
+# 4. FUNCIONES DE EJECUCIÓN CON FALLBACK
+# ============================================================
+def construir_executors(tools, prompt):
+    """Arma un AgentExecutor por cada modelo disponible."""
+    executors = []
+    for llm in get_llms():
+        agente_base = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
+        executor = AgentExecutor(
+            agent=agente_base,
+            tools=tools,
+            verbose=True,
+            max_iterations=25,
+            handle_parsing_errors=True,
+        )
+        executors.append(executor)
+    return executors
+
+def invocar_con_fallback(executors: list, input_dict: dict) -> dict:
+    """Prueba cada AgentExecutor en orden si ocurre un error."""
+    ultimo_error = None
+    for i, executor in enumerate(executors):
+        try:
+            return executor.invoke(input_dict)
+        except Exception as e:
+            ultimo_error = e
+            print(f"⚠️ Modelo #{i+1} falló ({type(e).__name__}: {e}). Probando el siguiente...")
+            continue
+    return {"output": f"⚠️ Todos los modelos disponibles fallaron. Último error: {str(ultimo_error)[:200]}"}
+
+# ============================================================
+# 5. FÁBRICA DEL AGENTE PRINCIPAL
 # ============================================================
 def create_surdao_agent(dfs: dict):
-    """Construye el agente con todas las herramientas y el prompt optimizado."""
-    llm = get_llm()
-
-    # --- Tool 1: Ejecutor de pandas (con timeout robusto para Windows/Linux) ---
     _python_tool = PythonAstREPLTool(locals={"pd": pd, "dfs": dfs})
 
     @tool
     def ejecutar_pandas(codigo: str) -> str:
-        """
-        Ejecuta código Python/pandas contra el diccionario `dfs`.
-        Úsala para obtener, filtrar, cruzar y analizar datos del Censo.
-        El código debe ser autónomo y usar `df = dfs["Nombre exacto de la tabla"]`.
-        """
+        """Ejecuta código Python/pandas contra el diccionario `dfs`."""
         def _ejecutar():
             return _python_tool.run(codigo)
 
@@ -131,128 +181,57 @@ def create_surdao_agent(dfs: dict):
                 resultado = futuro.result(timeout=30)
                 return str(resultado)[:4000]
             except concurrent.futures.TimeoutError:
-                return "❌ ERROR: La consulta tomó más de 30 segundos. Divídela en partes más pequeñas."
+                return "❌ ERROR: La consulta tomó más de 30 segundos. Divídela."
             except Exception as e:
                 return f"❌ ERROR al ejecutar pandas: {type(e).__name__}: {str(e)[:500]}"
 
-    # --- Tool 2: Buscador de tablas en el datamart ---
-    @tool
-    def buscar_tablas_en_datamart(palabra_clave: str) -> str:
-        """
-        BÚSQUEDA INTELIGENTE: encuentra qué tablas del datamart contienen información sobre un tema específico.
-        Ejemplos: 'fecundidad', 'religión', 'migración', 'discapacidad', 'envejecimiento', 'educación'.
-        Úsala cuando no sepas exactamente qué tabla contiene los datos que necesitas.
-        """
-        encontradas = []
-        for nombre, df in dfs.items():
-            coincide_nombre = palabra_clave.lower() in nombre.lower()
-            coincide_columna = any(palabra_clave.lower() in col.lower() for col in df.columns)
+    indice_semantico_tablas = construir_indice_tablas(dfs)
+    buscar_tablas_en_datamart = crear_tool_busqueda_hibrida(dfs, indice_semantico_tablas)
 
-            if coincide_nombre or coincide_columna:
-                prioridad = 0 if coincide_nombre else 1
-                columnas = list(df.columns)[:5]
-                filas = df.shape[0]
-                encontradas.append((prioridad, 
-                    f"📁 **{nombre}** ({filas:,} filas)\n"
-                    f"   - Columnas: {columnas}...\n"))
-
-        if encontradas:
-            encontradas.sort(key=lambda x: x[0])  # Prioridad: nombre primero
-            return "🔎 Tablas encontradas en el datamart:\n" + "\n".join(e[1] for e in encontradas[:8])
-        return f"❌ No encontré tablas relacionadas con '{palabra_clave}'."
-
-    # --- Ensamblaje de Herramientas ---
     herramientas = [ejecutar_pandas, buscar_tablas_en_datamart]
     rag_tool = get_rag_tool()
     if rag_tool:
         herramientas.append(rag_tool)
 
-    # --- PROMPT DEL SISTEMA ---
-    prompt_sistema = """Eres el **Agente Principal de Sur DAO**, un asistente experto en datos sociodemográficos, educativos y censales de Chile.
+    def generar_seccion_datamart(diccionario_tablas: dict) -> str:
+        lineas = []
+        for nombre, df in diccionario_tablas.items():
+            columnas = ", ".join(df.columns[:8])
+            lineas.append(f'- `dfs["{nombre}"]` → {df.shape[0]:,} filas. Columnas: {columnas}...')
+        return "\n".join(lineas)
+
+    seccion_datamart = generar_seccion_datamart(dfs)
+
+    prompt_sistema = f"""Eres el **Agente Principal de Sur DAO**, un asistente experto en datos sociodemográficos, educativos y censales de Chile.
 
 ## 📁 DATAMART DISPONIBLE
-Tienes acceso a un diccionario llamado `dfs` con las siguientes tablas (usa `buscar_tablas_en_datamart` para explorar temas no listados):
-
-### Educacionales e Históricos
-- `dfs["Histórico Educativo (2012-2023)"]` → Columnas: RBD, Nombre_Colegio, Total_Alumnos, Total_Docentes, Ratio_Alumnos_Docente, Promedio_Notas, Anio, COMUNA, REGION, Volatilidad_Rendimiento
-- `dfs["Matriz 2024 + Censo"]` → Columnas: RBD, Nombre_Colegio, Total_Alumnos, Ratio_Alumnos_Docente, Promedio_Notas, comuna, sabe_leer_y_escribir, poblacion_de_5_años_o_más, parvularia, básica, media, superior, tasa_de_asistencia_neta_educacion_básica_/r
-- `dfs["Años Escolaridad (P7_4)"]` → comuna, sexo, años_de_escolaridad_promedio, años_de_escolaridad_promedio_para_la_poblacion_de_18_años_o_más
-- `dfs["Asistencia Neta Comunal (P7_8)"]` → comuna, tasa_de_asistencia_neta_educacion_parvularia_/r, ...básica_/r, ...media_/r, ...superior_/r
-
-### Demografía y Diversidad
-- `dfs["Envejecimiento (D2_2)"]` → comuna, sexo, poblacion_censada, 0_14, 15_64, 65_años_o_más, indice_de_envejecimiento
-- `dfs["Discapacidad (P1_2)"]` → comuna, grupos_de_edad, poblacion_de_5_años_o_más_con_discapacidad, hombre, mujer
-- `dfs["Pueblos Originarios (P2_2)"]` → comuna, poblacion_que_es_o_se_considera_perteneciente_a_un_pueblo_indigena_u_originario, mapuche, aymara, rapa_nui, atacameño_o_lickanantay, quechua, colla, diaguita, kawésqar, yagán, chango, selk'nam, otro, pueblo_no_declarado
-- `dfs["Alfabetización Comunal (P7_10)"]` → comuna, sabe_leer_y_escribir, poblacion_de_5_años_o_más, 5_14_años, 15_64_años, 65_años_o_más
-- `dfs["Nivel Educativo Comunal (P7_2)"]` → comuna, poblacion_censada, nunca_asistio, diferencial, parvularia, básica, media, superior, nivel_educativo_no_declarado
-
-### Migración y Movilidad
-- `dfs["Escolaridad Inmigrantes (P8_2)"]` → comuna, años_de_escolaridad_promedio, años_de_escolaridad_promedio_para_la_poblacion_de_18_años_o_más
-- `dfs["Inmigrantes por País (D4_4)"]` → comuna, pais_o_continente_de_nacimiento, inmigrantes_internacionales
-- `dfs["Migración Interna (D5_2)"]` → ESTRUCTURA ANCHA: 'comuna_de_residencia_habitual_actual', 'poblacion_censada', 'no_migrante_interno_comunal', 'aún_no_nacian_(menores_de_5_años)' + una columna por cada comuna de Chile con el número de personas llegadas desde allí.
+Los nombres de tabla de abajo son EXACTOS — cópialos tal cual aparecen, entre comillas, sin traducirlos ni reformatearlos:
+{seccion_datamart}
 
 ## 🔧 HERRAMIENTAS DISPONIBLES
-1. **`ejecutar_pandas(codigo)`** → Para obtener, filtrar, cruzar y analizar datos. Siempre empieza con `df = dfs["Nombre exacto de la tabla"]`.
-2. **`buscar_tablas_en_datamart(palabra_clave)`** → Para descubrir qué tablas contienen un tema específico.
+1. **`ejecutar_pandas(codigo)`** → Para obtener, filtrar, cruzar y analizar datos. Siempre empieza con `df = dfs["Nombre EXACTO de la lista de arriba"]`.
+2. **`buscar_tablas_en_datamart(palabra_clave)`** → SIEMPRE úsala primero si no estás 100% seguro del nombre exacto de una tabla, o si `ejecutar_pandas` te devuelve un KeyError. No adivines el nombre dos veces seguidas.
 3. **`consultar_manual_censo(query)`** → Solo para definiciones metodológicas o fórmulas del Censo 2024.
 
 ## ⚠️ REGLAS ESTRICTAS
-1. **NUNCA inventes datos.** Siempre usa `ejecutar_pandas` para obtenerlos.
-2. **Filtrado de comunas:** usa `.str.lower()` en ambos lados:
-   - `df[df['comuna'].str.lower() == 'sierra gorda']`
-   - En `Histórico Educativo` la columna se llama `COMUNA` (mayúsculas).
-3. **Sé eficiente:** Una vez que tengas los datos exactos que responden la pregunta, DETÉN el análisis y entrega la respuesta. No hagas comprobaciones adicionales.
-4. **Consultas complejas:** Si necesitas cruzar más de 2 tablas o el código es muy largo, DIVIDE la respuesta en partes y guía al usuario paso a paso.
-5. **Errores:** Si encuentras un error de timeout o límite de iteraciones, responde con un mensaje amigable pidiendo al usuario que simplifique o divida la pregunta.
-6. **SALUDOS Y BIENVENIDAS:** Si el usuario te saluda ("hola", "buenos días") o te pregunta qué puedes hacer, responde con un mensaje de bienvenida y una breve descripción de tus capacidades. Responde SIEMPRE invitándolo a explorar de lo general a lo particular con este ejemplo:
-   🤖 ¡Hola! Soy **Sur DAO 2.0**, tu Agente Analítico Especializado en Educación y Sociodemografía de Chile. 🇨🇱📊\n\n"
-        "Tengo en mi memoria un datamart avanzado con más de **60 bases de datos cruzadas** (Censo 2024 y MINEDUC).\n\n"
-        "💡 **¿Cómo sacarme el mayor provecho?**\n"
-        "Te recomiendo ir de lo general a lo particular. Aquí tienes un flujo que funciona perfecto:\n\n"
-        "1️⃣ **Parte por tu comuna:**\n"
-        "👉 *'¿Qué datos tienes de Talagante?'*\n\n"
-        "2️⃣ **Haz zoom en un tema:**\n"
-        "👉 *'¿Cómo es la educación de los inmigrantes comparada con los nacionales ahí?'*\n\n"
-        "3️⃣ **Cruza con evolución histórica:**\n"
-        "👉 *'Respecto a la evolución del rendimiento y el ratio estudiantes/profesor, ¿qué datos históricos tienes?'*\n\n"
-        "También puedes usar `/buscar [tema]` para encontrar tablas en mi base de datos.\n\n"
-        "¿Por qué comuna empezamos a analizar hoy? 🚀
+1. **NUNCA inventes el nombre de una tabla.** Si dudás, llama a `buscar_tablas_en_datamart` antes de `ejecutar_pandas`.
+2. **Si `ejecutar_pandas` falla con KeyError**, tu próximo paso OBLIGATORIO es usar `buscar_tablas_en_datamart`.
+3. **Filtrado de comunas:** usa `.str.lower()` en ambos lados. En `Histórico Educativo` la columna se llama `COMUNA` (mayúsculas).
+4. **Sé eficiente:** Una vez que tengas los datos exactos, DETÉN el análisis y entrega la respuesta.
+5. **Consultas complejas:** DIVIDE la respuesta en partes y guía al usuario paso a paso si el código es muy largo.
+6. **SALUDOS Y BIENVENIDAS:** SOLO si el usuario te saluda de forma genérica ("hola", "buenos días") sin hacer ninguna pregunta de datos, responde con el mensaje de bienvenida. NUNCA repitas el saludo si el usuario ya está preguntando por una comuna o pidiendo información.
+7. **PROHIBIDO DAR LISTAS GENÉRICAS O INVENTAR:** Si el usuario te pregunta "¿qué datos tienes de [Comuna]?", ESTÁ PROHIBIDO responder con una lista teórica de temas. Tienes que usar OBLIGATORIAMENTE `ejecutar_pandas` para extraer NÚMEROS REALES de esa comuna, y entregar la respuesta usando la estructura de formato. ¡Nunca inventes indicadores que no existan en el datamart!
 
 ## 📋 REGLAS DE FORMATO PARA RESPUESTAS (OBLIGATORIO)
-
-Sigue esta estructura **siempre** que respondas con datos:
-
 ### 🔹 1. Resumen ejecutivo (máximo 3 líneas)
-Entrega los datos más impactantes de forma concisa. Ejemplo:
-- La comuna de Sierra Gorda tiene una población censada de 1.472 personas.
-- El ratio de alumnos por docente en la comuna es de 15:1.
-- El promedio de notas en la comuna es de 6.5.
-
 ### 🔹 2. Tabla o lista de indicadores clave (máximo 5-6 filas)
-Selecciona solo los indicadores más relevantes para la pregunta. Usa formato tabla o viñetas simples.
-
 ### 🔹 3. Invitación a profundizar (opcional)
-Termina con una pregunta abierta para que el usuario pueda elegir el siguiente paso.
 
-### ❌ LO QUE NO DEBES HACER:
+❌ LO QUE NO DEBES HACER:
 - No incluyas datos crudos de todas las tablas consultadas.
-- No incluyas listas largas de países, colegios o grupos de edad completos.
-- No uses formato científico (ej: `1.0e3`). Usa números enteros o con 1 decimal.
-- No mezcles markdown con texto sin formato (evita `_`, `*`, `[` sueltos).
-- Si el usuario pregunta por una comuna, no le entregues las 12 tablas. Elige los 5-6 datos más relevantes.
-
-✅ **Ejemplo de respuesta ideal:**
-
-🏔️ Sierra Gorda — 1.472 hab.
-
-- Índice de envejecimiento: 27.9 (población muy joven)
-- 31.8% inmigrantes | 14.7% pueblos originarios
-- Escolaridad 18+: 11.2 años | Asistencia básica: 95.4%
-
-¿Quieres que profundice en educación, migración o demografía?
-
+- No uses formato científico.
+- No mezcles markdown con texto sin formato.
 """
-
     prompt = ChatPromptTemplate.from_messages([
         ("system", prompt_sistema),
         MessagesPlaceholder(variable_name="chat_history"),
@@ -260,13 +239,4 @@ Termina con una pregunta abierta para que el usuario pueda elegir el siguiente p
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
 
-    # --- CONSTRUCCIÓN DEL AGENTE ---
-    agente_base = create_tool_calling_agent(llm=llm, tools=herramientas, prompt=prompt)
-
-    return AgentExecutor(
-        agent=agente_base,
-        tools=herramientas,
-        verbose=True,
-        max_iterations=25,  # 🔥 Aumentado de 15 a 25 para consultas complejas
-        handle_parsing_errors=True,  # 🔥 No colapsa ante errores de parsing
-    )
+    return construir_executors(herramientas, prompt)
