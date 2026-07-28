@@ -92,7 +92,7 @@ Requiere **Python 3.11** (el stack de LangChain usado no es compatible con Pytho
 
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/<tu-usuario>/surdao-censo-educacion.git
+git clone https://github.com/tianhh/surdao-censo-educacion.git
 cd surdao-censo-educacion
 
 # 2. Crear y activar entorno virtual con Python 3.11
