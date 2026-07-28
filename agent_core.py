@@ -1,6 +1,9 @@
 import os
+import sys
 import pandas as pd
 import concurrent.futures
+from typing import List
+
 from langchain_openai import ChatOpenAI
 from langchain_experimental.tools.python.tool import PythonAstREPLTool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
@@ -15,40 +18,90 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ============================================================
+# 1. CONFIGURACIÓN CENTRALIZADA DE MODELOS
 # ============================================================
-# 1. CONFIGURACIÓN DEL LLM (Múltiples modelos para Fallback)
-# ============================================================
+
+# Modelos RECOMENDADOS para OpenRouter que SÍ soportan tool calling.
+# Los modelos :free de OpenRouter TIENEN rate limits agresivos (1 req/seg)
+# y a menudo NO soportan function calling correctamente.
+# Si usas :free, considera agregar delays o usar modelos de pago.
 MODELOS_NUBE_FALLBACK = [
-    "google/gemma-2-9b-it:free",        # Excelente para razonamiento
-    "mistralai/mistral-7b-instruct:free", # Rápido y muy estable
-    "qwen/qwen-2-7b-instruct:free",       # Muy buen manejo de código y datos
+    "anthropic/claude-3.5-haiku",           # Rápido, barato, buen tool calling
+    "openai/gpt-4o-mini",                   # Excelente tool calling, económico
+    "mistralai/mistral-small-3.1-24b-instruct",  # Buen balance
 ]
 
-MODELO_LOCAL = "oc/deepseek-v4-flash-free"  # Alias real en tu OmniRoute
+MODELO_LOCAL = "oc/deepseek-v4-flash-free" # Alias real en tu OmniRoute
 
-def get_llms():
-    """Devuelve una LISTA de instancias ChatOpenAI en orden de preferencia."""
-    from dotenv import load_dotenv
-    load_dotenv()
 
-    openrouter_key = None
-    try:
-        import streamlit as st
-        openrouter_key = st.secrets.get("OPENROUTER_API_KEY")
-    except Exception:
-        pass
-    openrouter_key = openrouter_key or os.environ.get("OPENROUTER_API_KEY")
+def _get_env(key: str, default=None):
+    """Lee variable de entorno, con soporte para Streamlit secrets."""
+    val = os.environ.get(key, default)
+    # Intentar streamlit secrets solo si estamos en un contexto Streamlit
+    if val is None:
+        try:
+            import streamlit as st
+            val = st.secrets.get(key)
+        except Exception:
+            pass
+    return val
+
+
+def get_llms() -> List[ChatOpenAI]:
+    """
+    Devuelve una LISTA de instancias ChatOpenAI en orden de preferencia.
+    Soporta: OpenRouter (nube) → OmniRoute (local).
+    """
+    openrouter_key = _get_env("OPENROUTER_API_KEY")
+    openrouter_base = _get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
     if openrouter_key:
-        os.environ["OPENAI_API_KEY"] = openrouter_key
-        os.environ["OPENAI_API_BASE"] = "https://openrouter.ai/api/v1"
         print("🌐 Modo activo: NUBE (OpenRouter) con fallback por reintento")
-        return [ChatOpenAI(model=m, temperature=0, timeout=45) for m in MODELOS_NUBE_FALLBACK]
+        # Headers requeridos por OpenRouter para evitar bloqueos
+        extra_headers = {
+            "HTTP-Referer": _get_env("APP_URL", "https://surdao.app"),
+            "X-Title": "Sur DAO 2.0",
+        }
+        return [
+            ChatOpenAI(
+                model_name=m,                # ✅ model_name (no 'model')
+                temperature=0,
+                openai_api_key=openrouter_key,
+                openai_api_base=openrouter_base,
+                default_headers=extra_headers,  # ✅ Headers requeridos por OpenRouter
+                max_retries=2,
+            )
+            for m in MODELOS_NUBE_FALLBACK
+        ]
     else:
-        os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
-        os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        print("💻 Modo activo: LOCAL (OmniRoute)")
-        return [ChatOpenAI(model=MODELO_LOCAL, temperature=0, timeout=45)]
+        # Modo local (OmniRoute u otro servidor OpenAI-compatible local)
+        local_key = _get_env("LOCAL_API_KEY", "omniroute-local-key")
+        local_base = _get_env("LOCAL_API_BASE", "http://localhost:20128/v1")
+
+        # Verificación temprana: ¿responde el servidor local?
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"{local_base}/models", method="GET")
+            req.add_header("Authorization", f"Bearer {local_key}")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    print(f"💻 Modo activo: LOCAL ({local_base})")
+                else:
+                    print(f"⚠️ Servidor local respondió HTTP {resp.status}")
+        except Exception as e:
+            print(f"⚠️ Servidor local NO disponible en {local_base}: {e}")
+            print("   → El agente fallará al invocarse. Revisa que OmniRoute esté corriendo.")
+
+        return [
+            ChatOpenAI(
+                model_name=MODELO_LOCAL,
+                temperature=0,
+                openai_api_key=local_key,
+                openai_api_base=local_base,
+                max_retries=1,
+            )
+        ]
+
 
 # ============================================================
 # 2. RAG (MANUAL DEL CENSO)
@@ -89,6 +142,7 @@ def get_rag_tool():
 
     return consultar_manual_censo
 
+
 # ============================================================
 # 3. ÍNDICE SEMÁNTICO DE TABLAS (BÚSQUEDA HÍBRIDA)
 # ============================================================
@@ -105,6 +159,7 @@ def construir_indice_tablas(dfs: dict):
         )
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     return FAISS.from_documents(documentos, embeddings)
+
 
 def crear_tool_busqueda_hibrida(dfs: dict, indice_semantico):
     @tool
@@ -134,35 +189,73 @@ def crear_tool_busqueda_hibrida(dfs: dict, indice_semantico):
 
     return buscar_tablas_en_datamart
 
+
 # ============================================================
 # 4. FUNCIONES DE EJECUCIÓN CON FALLBACK
 # ============================================================
+
+def _es_error_fatal(error: Exception) -> bool:
+    """
+    Determina si un error es FATAL (no tiene sentido reintentar con otro modelo)
+    o TEMPORAL (vale la pena intentar con el siguiente modelo).
+    """
+    msg = str(error).lower()
+    errores_fatales = [
+        "authentication", "unauthorized", "invalid api key", "incorrect api key",
+        "insufficient_quota", "billing", "payment", "rate limit exceeded",
+        "invalid model", "model not found", "not a valid model",
+    ]
+    return any(e in msg for e in errores_fatales)
+
+
 def construir_executors(tools, prompt):
     """Arma un AgentExecutor por cada modelo disponible."""
     executors = []
-    for llm in get_llms():
-        agente_base = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
-        executor = AgentExecutor(
-            agent=agente_base,
-            tools=tools,
-            verbose=True,
-            max_iterations=25,
-            handle_parsing_errors=True,
-        )
-        executors.append(executor)
+    llms = get_llms()
+    for i, llm in enumerate(llms):
+        try:
+            agente_base = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
+            executor = AgentExecutor(
+                agent=agente_base,
+                tools=tools,
+                verbose=True,
+                max_iterations=25,
+                handle_parsing_errors=True,
+            )
+            executors.append(executor)
+        except Exception as e:
+            print(f"⚠️ No se pudo construir executor con modelo #{i+1}: {e}")
     return executors
 
+
 def invocar_con_fallback(executors: list, input_dict: dict) -> dict:
-    """Prueba cada AgentExecutor en orden si ocurre un error."""
+    """Prueba cada AgentExecutor en orden si ocurre un error temporal."""
+    if not executors:
+        return {"output": "⚠️ No hay modelos configurados disponibles. Revisa tu OPENROUTER_API_KEY o el servidor local."}
+
     ultimo_error = None
     for i, executor in enumerate(executors):
         try:
             return executor.invoke(input_dict)
         except Exception as e:
             ultimo_error = e
-            print(f"⚠️ Modelo #{i+1} falló ({type(e).__name__}: {e}). Probando el siguiente...")
+            if _es_error_fatal(e):
+                print(f"🚫 Modelo #{i+1}: error FATAL ({type(e).__name__}). No se reintenta con él.")
+                continue
+            print(f"⚠️ Modelo #{i+1} falló ({type(e).__name__}: {str(e)[:150]}). Probando el siguiente...")
             continue
-    return {"output": f"⚠️ Todos los modelos disponibles fallaron. Último error: {str(ultimo_error)[:200]}"}
+
+    return {
+        "output": (
+            f"⚠️ Todos los modelos disponibles fallaron.\n"
+            f"Último error: {type(ultimo_error).__name__}: {str(ultimo_error)[:200]}\n\n"
+            f"💡 Verifica:\n"
+            f"  • Que OPENROUTER_API_KEY esté configurada (si usas nube)\n"
+            f"  • Que OmniRoute esté corriendo en localhost:20128 (si usas local)\n"
+            f"  • Que tu plan de OpenRouter tenga quota disponible"
+        )
+    }
+
 
 # ============================================================
 # 5. FÁBRICA DEL AGENTE PRINCIPAL
