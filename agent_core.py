@@ -31,7 +31,7 @@ MODELOS_NUBE_FALLBACK = [
     "mistralai/mistral-small-3.1-24b-instruct",  # Buen balance
 ]
 
-MODELO_LOCAL = "groq/llama-3.1-70b-versatile"
+MODELO_LOCAL = "groq/openai/gpt-oss-120b"
 
 
 def _get_env(key: str, default=None):
