@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 
-from agent_core import create_surdao_agent
+from agent_core import create_surdao_agent, invocar_con_fallback
 
 # 🔒 SEGURIDAD: Exigir token por entorno, sin hardcodear
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -150,7 +150,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output_final = obtener_cache(pregunta)
         
         if not output_final:
-            respuesta = agente.invoke({"input": pregunta, "chat_history": chat_history})
+            respuesta = invocar_con_fallback(agente, {"input": pregunta, "chat_history": chat_history})
             output_final = respuesta["output"]
 
             if "stopped due to max iterations" in output_final.lower() or "agent stopped" in output_final.lower():

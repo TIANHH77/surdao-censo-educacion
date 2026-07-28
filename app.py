@@ -5,7 +5,7 @@ import pydeck as pdk
 from langchain_core.messages import HumanMessage, AIMessage
 
 # 🔥 Importamos EL CEREBRO desde agent_core.py
-from agent_core import create_surdao_agent
+from agent_core import create_surdao_agent, invocar_con_fallback
 
 st.set_page_config(page_title="Sur DAO 2.0", layout="wide")
 
@@ -233,7 +233,7 @@ if pregunta:
 
     with st.spinner("🧠 Procesando consulta..."):
         try:
-            respuesta = agente.invoke({"input": pregunta, "chat_history": chat_history})
+            respuesta = invocar_con_fallback(agente, {"input": pregunta, "chat_history": chat_history})
             output_final = respuesta["output"]
 
             es_compleja = "stopped due to max iterations" in output_final.lower() or "agent stopped" in output_final.lower()
