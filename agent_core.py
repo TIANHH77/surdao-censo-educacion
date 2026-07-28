@@ -16,30 +16,46 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ============================================================
 ## ============================================================
+# ============================================================
 # 1. CONFIGURACIÓN DEL LLM (LOCAL vs NUBE AUTOMÁTICO)
 # ============================================================
 def get_llm():
-    """Detecta automáticamente si corre en Streamlit Cloud o en local"""
+    """Detecta automáticamente si corre en Streamlit Cloud o en local mediante secrets"""
     from dotenv import load_dotenv
     load_dotenv()
 
-    # Si estamos en Streamlit Cloud (o hay una variable de entorno de la nube), usa OpenRouter
-    # De lo contrario, usa tu OmniRoute local
-    es_nube = "STREAMLIT_SHARING_MODE" in os.environ or os.environ.get("USAR_NUBE", "false").lower() == "true"
+    # Detección EXPLÍCITA: si existe una key de OpenRouter en secrets/env, usamos nube.
+    openrouter_key = None
+    try:
+        import streamlit as st
+        openrouter_key = st.secrets.get("OPENROUTER_API_KEY")
+    except Exception:
+        pass
+    
+    openrouter_key = openrouter_key or os.environ.get("OPENROUTER_API_KEY")
 
-    if es_nube:
-        os.environ["OPENAI_API_KEY"] = os.environ.get("OPENROUTER_API_KEY", "")
+    if openrouter_key:
+        os.environ["OPENAI_API_KEY"] = openrouter_key
         os.environ["OPENAI_API_BASE"] = "https://openrouter.ai/api/v1"
-        # Usamos un modelo válido y activo de tu JSON listado
-        modelo_activo = "openrouter/openai/gpt-oss-20b:free"
-        print("🌐 Modo activo: NUBE (OpenRouter)")
+        
+        # 1. Definimos el modelo principal en la nube (sin el prefijo "openrouter/")
+        llm_principal = ChatOpenAI(model="openai/gpt-oss-20b:free", temperature=0, timeout=45)
+        
+        # 2. Definimos los modelos de respaldo (si el principal falla o satura, salta al siguiente)
+        llm_respaldo_1 = ChatOpenAI(model="google/gemma-2-9b-it:free", temperature=0, timeout=45)
+        llm_respaldo_2 = ChatOpenAI(model="meta-llama/llama-3.1-8b-instruct:free", temperature=0, timeout=45)
+        
+        print("🌐 Modo activo: NUBE (OpenRouter) con Fallbacks")
+        # Retornamos el modelo con su cadena de supervivencia
+        return llm_principal.with_fallbacks([llm_respaldo_1, llm_respaldo_2])
+
     else:
+        # En LOCAL, OmniRoute gestiona el fallback por su cuenta
         os.environ["OPENAI_API_KEY"] = "omniroute-local-key"
         os.environ["OPENAI_API_BASE"] = "http://localhost:20128/v1"
-        modelo_activo = "openrouter/openai/gpt-oss-20b:free"
-        print("💻 Modo activo: LOCAL (OmniRoute)")
-
-    return ChatOpenAI(model=modelo_activo, temperature=0)
+        print("💻 Modo activo: LOCAL (OmniRoute gestiona el balanceo)")
+        
+        return ChatOpenAI(model="openrouter/openai/gpt-oss-20b:free", temperature=0, timeout=45)
 
 
 # ============================================================

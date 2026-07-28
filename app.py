@@ -9,7 +9,20 @@ from agent_core import create_surdao_agent
 
 st.set_page_config(page_title="Sur DAO 2.0", layout="wide")
 
-st.title("🤖 Sur DAO 2.0 - Motor de Datos Híbrido")
+# Usamos columnas para poner el logo al lado del título
+col1, col2 = st.columns([1, 15])
+
+with col1:
+    try:
+        # Ruta relativa: funciona en tu PC y en la nube
+        st.image("assets/surdao.svg", width=60)
+    except Exception:
+        # Fallback por si la imagen no carga
+        st.title("🏔️")
+
+with col2:
+    st.title("Sur DAO 2.0 - Motor de Datos Híbrido")
+
 st.markdown("Agente analítico con datamart completo (60+ tablas), RAG y panel geográfico interactivo.")
 
 # ==========================================
