@@ -31,7 +31,7 @@ MODELOS_NUBE_FALLBACK = [
     "mistralai/mistral-small-3.1-24b-instruct",  # Buen balance
 ]
 
-MODELO_LOCAL = "oc/deepseek-v4-flash-free" # Alias real en tu OmniRoute
+MODELO_LOCAL = "llama-3.1-70b-versatile"  # O "llama3-70b-8192" dependiendo de cómo salga en tu OmniRoute
 
 
 def _get_env(key: str, default=None):
