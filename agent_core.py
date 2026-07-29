@@ -1,5 +1,7 @@
 import os
 import sys
+import re
+import unicodedata
 import pandas as pd
 import concurrent.futures
 from typing import List
@@ -18,17 +20,47 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ============================================================
+# 0. UTILIDAD DE NORMALIZACIÓN DE TEXTO (Tildes, Ñ y Caracteres Raros)
+# ============================================================
+def normalizar_texto_chile(texto: str) -> str:
+    """
+    Limpia tildes, mayúsculas y espacios extras, pero CONSERVA la letra 'ñ'.
+    Ideal para emparejar nombres de comunas de forma robusta.
+    """
+    if not isinstance(texto, str):
+        return str(texto)
+    
+    texto = texto.lower().strip()
+    
+    # Reemplazos seguros de vocales con tilde / diéresis
+    reemplazos = [
+        ('á','a'),('à','a'),('ä','a'),('â','a'),
+        ('é','e'),('è','e'),('ë','e'),('ê','e'),
+        ('í','i'),('ì','i'),('ï','i'),('î','i'),
+        ('ó','o'),('ò','o'),('ö','o'),('ô','o'),
+        ('ú','u'),('ù','u'),('ü','u'),('û','u')
+    ]
+    for orig, rem in reemplazos:
+        texto = texto.replace(orig, rem)
+        
+    # Eliminar símbolos raros, puntuación o emojis (mantiene letras, números, espacios y la ñ)
+    texto = re.sub(r'[^a-z0-9\sñ]', '', texto)
+    # Compactar espacios múltiples
+    texto = re.sub(r'\s+', ' ', texto)
+    
+    return texto
+
+
+# ============================================================
 # 1. CONFIGURACIÓN CENTRALIZADA DE MODELOS
 # ============================================================
 
-# Modelos RECOMENDADOS para OpenRouter que SÍ soportan tool calling.
 MODELOS_NUBE_FALLBACK = [
     "anthropic/claude-3.5-haiku",           # Rápido, barato, buen tool calling
     "openai/gpt-4o-mini",                   # Excelente tool calling, económico
     "mistralai/mistral-small-3.1-24b-instruct",  # Buen balance
 ]
 
-# Modelo local mediante OmniRoute
 MODELO_LOCAL = "groq/openai/gpt-oss-120b"
 
 
@@ -45,10 +77,7 @@ def _get_env(key: str, default=None):
 
 
 def get_llms() -> List[ChatOpenAI]:
-    """
-    Devuelve una LISTA de instancias ChatOpenAI en orden de preferencia.
-    Soporta: OpenRouter (nube) → OmniRoute (local).
-    """
+    """Devuelve una LISTA de instancias ChatOpenAI en orden de preferencia."""
     openrouter_key = _get_env("OPENROUTER_API_KEY")
     openrouter_base = _get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
@@ -73,7 +102,6 @@ def get_llms() -> List[ChatOpenAI]:
         local_key = _get_env("LOCAL_API_KEY", "omniroute-local-key")
         local_base = _get_env("LOCAL_API_BASE", "http://localhost:20128/v1")
 
-        # Verificación temprana del servidor local
         try:
             import urllib.request
             req = urllib.request.Request(f"{local_base}/models", method="GET")
@@ -81,8 +109,6 @@ def get_llms() -> List[ChatOpenAI]:
             with urllib.request.urlopen(req, timeout=3) as resp:
                 if resp.status == 200:
                     print(f"💻 Modo activo: LOCAL ({local_base})")
-                else:
-                    print(f"⚠️ Servidor local respondió HTTP {resp.status}")
         except Exception as e:
             print(f"⚠️ Servidor local NO disponible en {local_base}: {e}")
 
@@ -245,7 +271,12 @@ def invocar_con_fallback(executors: list, input_dict: dict) -> dict:
 # 5. FÁBRICA DEL AGENTE PRINCIPAL
 # ============================================================
 def create_surdao_agent(dfs: dict):
-    _python_tool = PythonAstREPLTool(locals={"pd": pd, "dfs": dfs})
+    # Inyectamos la función de normalización en el entorno de ejecución de Pandas
+    _python_tool = PythonAstREPLTool(locals={
+        "pd": pd, 
+        "dfs": dfs, 
+        "normalizar": normalizar_texto_chile
+    })
 
     @tool
     def ejecutar_pandas(codigo: str) -> str:
@@ -271,33 +302,21 @@ def create_surdao_agent(dfs: dict):
     if rag_tool:
         herramientas.append(rag_tool)
 
-    def generar_seccion_datamart(diccionario_tablas: dict) -> str:
-        lineas = []
-        for nombre, df in diccionario_tablas.items():
-            columnas = ", ".join(df.columns[:8])
-            lineas.append(f'- `dfs["{nombre}"]` → {df.shape[0]:,} filas. Columnas: {columnas}...')
-        return "\n".join(lineas)
-
-    seccion_datamart = generar_seccion_datamart(dfs)
-
-    prompt_sistema = f"""Eres el **Agente Principal de Sur DAO**, un asistente experto en datos sociodemográficos, educativos y censales de Chile, rigurosamente basado en el Manual de Censo 2024.
-
-## 📁 DATAMART DISPONIBLE
-Los nombres de tabla de abajo son EXACTOS — cópialos tal cual aparecen, entre comillas, sin traducirlos ni reformatearlos:
-{seccion_datamart}
+    prompt_sistema = """Eres el **Agente Principal de Sur DAO**, un asistente experto en datos sociodemográficos, educativos y censales de Chile, basado rigurosamente en el Manual del Censo 2024[cite: 5].
 
 ## 🔧 HERRAMIENTAS DISPONIBLES
-1. **`ejecutar_pandas(codigo)`** → Para obtener, filtrar, cruzar y analizar datos. Siempre empieza con `df = dfs["Nombre EXACTO de la lista de arriba"]`.
-2. **`buscar_tablas_en_datamart(palabra_clave)`** → SIEMPRE úsala primero si no estás 100% seguro del nombre exacto de una tabla, o si `ejecutar_pandas` te devuelve un KeyError.
-3. **`consultar_manual_censo(query)`** → Solo para definiciones metodológicas o fórmulas del Censo 2024[cite: 5].
+1. **`buscar_tablas_en_datamart(palabra_clave)`** → Úsala primero para encontrar las tablas relevantes según el tema o comuna.
+2. **`ejecutar_pandas(codigo)`** → Obligatoria para extraer las cifras reales. Empieza con `df = dfs["Nombre EXACTO"]`.
+3. **`consultar_manual_censo(query)`** → Solo para definiciones metodológicas o fórmulas[cite: 5].
 
-## ⚠️ REGLAS ESTRICTAS Y METODOLÓGICAS (BASADO EN MANUAL CENSO 2024)[cite: 5]
-1. **NUNCA inventes nombres de tablas ni uses datos de ejemplo.** Tu única fuente de verdad es `ejecutar_pandas`. Si un dato no está, di "No disponible"[cite: 4, 6].
-2. **Manejo de Valores Especiales:** Antes de calcular promedios o sumas, DEBES excluir los valores especiales: `-99` (No responde), `-66` (Suprimido por anonimización) y `NA` (No aplica)[cite: 5, 6].
-3. **Cálculo de Porcentajes:** Excluye siempre los casos de "No respuesta" (`-99`) del denominador total al calcular proporciones[cite: 5, 6].
-4. **Filtro de Sexo y Totales:** Las tablas demográficas separan las filas por `sexo` ("Total", "Hombre", "Mujer"). NUNCA sumes sin filtrar antes explícitamente `df[df['sexo'] == 'Total']` (o equivalente) para evitar duplicar población.
-5. **Universos Específicos:** Respeta los universos del Censo (ej. fecundidad solo en mujeres de 15 a 49 años; empleo y alfabetización en 15 años o más)[cite: 6].
-6. **Redondeo:** Todos los indicadores y promedios finales deben presentarse redondeados a un (1) decimal[cite: 6].
+## ⚠️ REGLAS ESTRICTAS Y METODOLÓGICAS (MANUAL CENSO 2024)[cite: 5]
+1. **PROHIBIDO SER UN AGENTE VAGO:** Si usas `buscar_tablas_en_datamart`, TIENES PROHIBIDO limitarte a mostrar nombres de tablas al usuario. Debes invocar inmediatamente `ejecutar_pandas` para extraer los números y presentar las cifras reales.
+2. **CERO INVENTOS:** Si un dato no está en el datamart, di "No disponible"[cite: 4, 6]. Está prohibido usar datos de ejemplo.
+3. **Manejo de Valores Especiales:** Antes de promediar o sumar, DEBES excluir los valores especiales: `-99` (No responde), `-66` (Suprimido por anonimización) y `NA` (No aplica)[cite: 5, 6].
+4. **Cálculo de Proporciones:** Excluye siempre los casos de "No respuesta" (`-99`) del denominador[cite: 5, 6].
+5. **Filtrado Robusto de Comunas y Textos:** Como pueden haber variaciones por tildes o mayúsculas, utiliza la función auxiliar disponible `normalizar()` sobre las columnas de texto antes de filtrar (ej: `df[df['comuna'].apply(normalizar) == normalizar('Valparaíso')]`). Respeta y conserva siempre la letra `ñ` (ej: `ñuñoa`).
+6. **Filtro de Sexo y Totales:** Las tablas demográficas separan las filas por `sexo` ("Total", "Hombre", "Mujer"). NUNCA sumes sin filtrar antes explícitamente `df[df['sexo'] == 'Total']` (o equivalente) para evitar duplicar población.
+7. **Redondeo:** Todos los indicadores y promedios finales deben presentarse redondeados a un (1) decimal[cite: 6].
 
 ## 📋 REGLAS DE FORMATO PARA RESPUESTAS (OBLIGATORIO)
 ### 🔹 1. Resumen ejecutivo (máximo 3 líneas)
