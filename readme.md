@@ -99,7 +99,7 @@ python telegram_bot.py     # Terminal 2: Inicia el Bot de Telegram asíncrono
 
 ## 📄 Licencia
 
-*(Pendiente de definir — agrega aquí la licencia bajo la que se distribuye el proyecto, p. ej. MIT.)*
+*( MIT.)*
 
 ---
 
