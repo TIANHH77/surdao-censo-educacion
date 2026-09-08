@@ -1,0 +1,42 @@
+# ========================
+# Entornos Virtuales
+# ========================
+venv/
+.venv/
+env/
+
+# ========================
+# Archivos de Entorno (¡CRÍTICO PARA SEGURIDAD!)
+# ========================
+.env
+
+# ========================
+# Datos y Bases de Datos
+# ========================
+# Ignoramos la carpeta de datos porque los .parquet pesan mucho 
+# y Git no está hecho para almacenar grandes bases de datos.
+data/
+*.parquet
+*.csv
+*.xlsx
+
+# ========================
+# Archivos de Caché de Python
+# ========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ========================
+# Archivos del Sistema Operativo
+# ========================
+.DS_Store
+Thumbs.db
+
+# ========================
+# Archivos de herramientas
+# ========================
+.vscode/
+.idea/
