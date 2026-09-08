@@ -11,16 +11,6 @@ env/
 .env
 
 # ========================
-# Datos y Bases de Datos
-# ========================
-# Ignoramos la carpeta de datos porque los .parquet pesan mucho 
-# y Git no está hecho para almacenar grandes bases de datos.
-data/
-*.parquet
-*.csv
-*.xlsx
-
-# ========================
 # Archivos de Caché de Python
 # ========================
 __pycache__/
