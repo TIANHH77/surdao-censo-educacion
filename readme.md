@@ -36,6 +36,7 @@ surdao-censo-educacion/
 ```
 
 🚀 Características Principales de Ingeniería
+
 🧠 Motor Híbrido y Perfil Censal Multidimensional: Integra herramientas territoriales que cruzan automáticamente el rendimiento histórico escolar (RBD) con hasta 6 dimensiones del Censo 2024 (escolaridad adulta, envejecimiento, migración y pueblos originarios) en una sola pasada usando lookups dinámicos en memoria.
 
 🛡️ Balanceador de Carga Multicloud (Fallback): Arquitectura resiliente que enruta peticiones entre OpenRouter (modelos gratuitos) y Groq (LPU/Llama 3). Incluye un clasificador inteligente de excepciones que aborta la cadena ante errores de cuenta (auth/billing) pero salta al siguiente nodo disponible ante bloqueos de cuota (rate-limits).
