@@ -50,12 +50,7 @@ surdao-censo-educacion/
 ⚡ Caché de respuestas (Telegram): Las respuestas se cachean por hash de la pregunta con un TTL de 24 horas para ahorrar tokens en consultas repetidas.
 
 
-Capa,Tecnología,Propósito
-Orquestación,LangChain (create_tool_calling_agent),Razonamiento ReAct y orquestación de tools
-Procesamiento,Pandas + PythonAstREPLTool,Motor de cálculo relacional en RAM
-RAG & Búsqueda,FAISS + HuggingFace (all-MiniLM-L6-v2),Embeddings de catálogos y manuales
-Modelos de Lenguaje,OpenRouter APIs + Groq Cloud,Fallback multicloud para alta disponibilidad
-Interfaces,Streamlit / python-telegram-bot,UI web analítica / Bot con polling asíncrono
+CapaTecnologíaPropósitoOrquestaciónLangChain (create_tool_calling_agent)Razonamiento ReAct y orquestación de toolsProcesamientoPandas + PythonAstREPLToolMotor de cálculo relacional en RAMRAG & BúsquedaFAISS + HuggingFace (all-MiniLM-L6-v2)Embeddings de catálogos y manualesModelos de LenguajeOpenRouter APIs + Groq CloudFallback multicloud para alta disponibilidadInterfacesStreamlit / python-telegram-botUI web analítica / Bot con polling asíncrono
 
 
 🚀 Instalación y Despliegue Local
