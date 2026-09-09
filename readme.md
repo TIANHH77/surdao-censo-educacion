@@ -87,11 +87,12 @@ python telegram_bot.py     # Terminal 2: Inicia el Bot de Telegram asíncrono
 ```
 
 
-🧭 Limitaciones conocidas / Roadmap
-[ ] Anclar la caché de Telegram al chat_id (y no solo al texto de la pregunta) para no cruzar respuestas entre usuarios distintos.
-[ ] Mover la llamada al agente en telegram_bot.py a un hilo aparte (asyncio.to_thread) para no bloquear el event loop durante consultas largas.
-[ ] Persistir los índices FAISS a disco (save_local / load_local) para acelerar el arranque en frío en Streamlit Cloud.
-[ ] Implementar la interfaz de pantalla dividida (Dashboard + Copilot) en Streamlit usando columnas responsivas.
+## 🧭 Limitaciones conocidas / Roadmap
+
+- [ ] Anclar la caché de Telegram al `chat_id` (y no solo al texto de la pregunta) para no cruzar respuestas entre usuarios distintos.
+- [ ] Mover la llamada al agente en `telegram_bot.py` a un hilo aparte (`asyncio.to_thread`) para no bloquear el event loop durante consultas largas.
+- [ ] Persistir los índices FAISS a disco (`save_local` / `load_local`) para acelerar el arranque en frío en Streamlit Cloud.
+- [ ] Implementar la interfaz de pantalla dividida (Dashboard + Copilot) en Streamlit usando columnas responsivas.
 
 📄 Licencia
 MIT License
