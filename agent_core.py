@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import json
 import unicodedata
 import pandas as pd
 import concurrent.futures
@@ -141,7 +142,7 @@ def get_rag_tool():
     splits = text_splitter.split_documents(docs)
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectorstore = FAISS.from_documents(splits, embeddings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
     @tool
     def consultar_manual_censo(query: str) -> str:
@@ -197,17 +198,26 @@ def crear_tool_busqueda_hibrida(dfs: dict, indice_semantico):
 
     return buscar_tablas_en_datamart
 
+
 # ============================================================
 # 4. FUNCIONES DE EJECUCIÓN CON FALLBACK
 # ============================================================
-def _es_error_fatal(error: Exception) -> bool:
+ERRORES_CUENTA = [
+    "authentication", "unauthorized", "invalid api key",
+    "incorrect api key", "insufficient_quota", "billing", "payment",
+]
+
+ERRORES_MODELO = [
+    "rate limit exceeded", "invalid model", "model not found", "not a valid model",
+]
+
+def _clasificar_error(error: Exception) -> str:
     msg = str(error).lower()
-    errores_fatales = [
-        "authentication", "unauthorized", "invalid api key", "incorrect api key",
-        "insufficient_quota", "billing", "payment", "rate limit exceeded",
-        "invalid model", "model not found", "not a valid model",
-    ]
-    return any(e in msg for e in errores_fatales)
+    if any(e in msg for e in ERRORES_CUENTA):
+        return "cuenta"
+    if any(e in msg for e in ERRORES_MODELO):
+        return "modelo"
+    return "desconocido"
 
 def construir_executors(tools, prompt):
     executors = []
@@ -237,19 +247,98 @@ def invocar_con_fallback(executors: list, input_dict: dict) -> dict:
             return executor.invoke(input_dict)
         except Exception as e:
             ultimo_error = e
-            if _es_error_fatal(e):
-                print(f"🚫 Modelo #{i+1}: error FATAL ({type(e).__name__}). Se aborta la cadena para no gastar de más.")
-                return {"output": "⚠️ Error crítico de conexión o cuota con el proveedor de IA. Intenta más tarde."}
-            print(f"⚠️ Modelo #{i+1} falló ({type(e).__name__}). Probando el siguiente...")
+            tipo_error = _clasificar_error(e)
+            
+            if tipo_error == "cuenta":
+                print(f"🚫 Modelo #{i+1}: Error crítico de CUENTA ({type(e).__name__}). Se aborta la cadena para no gastar de más.")
+                return {"output": "⚠️ Error crítico de conexión o cuota con el proveedor de IA. Revisa tus credenciales."}
+            
+            print(f"⚠️ Modelo #{i+1} falló por error de {tipo_error.upper()} ({type(e).__name__}). Probando el siguiente modelo...")
             continue
 
     return {
         "output": (
-            f"⚠️ Todos los modelos disponibles fallaron.\n"
+            f"⚠️ Todos los modelos disponibles fallaron en cadena.\n"
             f"Último error: {type(ultimo_error).__name__}"
         )
     }
 
+# ============================================================
+# 4.5 CONFIGURACIÓN DEL PERFIL CENSAL MULTIDIMENSIONAL
+# ============================================================
+PERFIL_CENSAL_CONFIG = {
+    "escolaridad_promedio": {
+        "prefijo": "P7_4",
+        "columnas": ["sexo", "años_de_escolaridad_promedio"],
+        "filtro_columna": "sexo",
+        "filtro_valor": "Total Comuna", 
+    },
+    "envejecimiento": {
+        "prefijo": "D2_2",
+        "columnas": ["sexo", "0_14", "15_64", "65_años_o_más", "indice_de_envejecimiento"],
+        "filtro_columna": "sexo",
+        "filtro_valor": "Total", 
+    },
+    "inmigracion_paises": {
+        "prefijo": "D4_4",
+        "columnas": ["pais_o_continente_de_nacimiento", "inmigrantes_internacionales"],
+        "filtro_columna": None, 
+        "filtro_valor": None,
+    },
+    "discapacidad": {
+        "prefijo": "P1_2",
+        "columnas": ["grupos_de_edad", "poblacion_de_5_años_o_más_con_discapacidad"],
+        "filtro_columna": "grupos_de_edad",
+        "filtro_valor": "Total", 
+    },
+    "pueblos_originarios": {
+        "prefijo": "P2_2",
+        "columnas": ["mapuche", "aymara", "rapa_nui", "pueblo_no_declarado"],
+        "filtro_columna": None,
+        "filtro_valor": None,
+    },
+    "maternidad_y_familia": {
+        "prefijo": "D6_2",
+        "columnas": ["hijos_e_hijas_declarados", "cantidad_de_hijos_e_hijas", "0", "1", "2", "3", "4"],
+        "filtro_columna": "hijos_e_hijas_declarados",
+        "filtro_valor": "Total",
+    }
+}
+
+def obtener_perfil_censal(cut_comuna: float, dfs: dict) -> dict:
+    """Extrae múltiples dimensiones sociales de una comuna con búsqueda dinámica de llaves."""
+    perfil = {}
+    for etiqueta, cfg in PERFIL_CENSAL_CONFIG.items():
+        prefijo_crudo = cfg["prefijo"]
+        # Cubrimos ambas posibilidades por si el loader ya reemplazó los guiones
+        variante_espacio = prefijo_crudo.replace('_', ' ')
+        
+        # Búsqueda dinámica de la llave exacta en memoria
+        llave_real = next((k for k in dfs.keys() if k.startswith(prefijo_crudo) or k.startswith(variante_espacio)), None)
+        
+        if not llave_real:
+            perfil[etiqueta] = {"error": f"No se encontró tabla con prefijo '{prefijo_crudo}' en memoria."}
+            continue
+            
+        df = dfs[llave_real]
+        
+        try:
+            # Filtrar por comuna (usando el CUT)
+            sub = df[df["codigo_comuna"].astype(float) == cut_comuna]
+            
+            # Aplicar filtro específico
+            if cfg["filtro_columna"] and cfg["filtro_valor"] and cfg["filtro_columna"] in sub.columns:
+                sub = sub[sub[cfg["filtro_columna"]] == cfg["filtro_valor"]]
+                
+            # Extraer solo las columnas solicitadas que existan en el dataframe
+            cols_presentes = [c for c in cfg["columnas"] if c in sub.columns]
+            perfil[etiqueta] = sub[cols_presentes].to_dict("records")
+        except Exception as e:
+            # Ahora la consola canta exactamente dónde y por qué falló
+            print(f"⚠️ Cruce censal falló en {etiqueta} (tabla: {llave_real}): {e}")
+            perfil[etiqueta] = {"error": f"Fallo al procesar: {str(e)}"}
+            
+    return perfil
 # ============================================================
 # 5. FÁBRICA DEL AGENTE PRINCIPAL
 # ============================================================
@@ -257,7 +346,8 @@ def create_surdao_agent(dfs: dict):
     _python_tool = PythonAstREPLTool(locals={
         "pd": pd, 
         "dfs": dfs, 
-        "normalizar": normalizar_texto_chile
+        "normalizar": normalizar_texto_chile,
+        "json": json
     })
 
     @tool
@@ -276,10 +366,119 @@ def create_surdao_agent(dfs: dict):
             except Exception as e:
                 return f"❌ ERROR al ejecutar pandas: {type(e).__name__}: {str(e)[:500]}"
 
+    # --- NUEVAS TOOLS TERRITORIALES Y TEMPORALES ---
+    @tool
+    def escanear_comuna_educativa(nombre_comuna: str) -> str:
+        """
+        ÚTIL PARA INICIAR UNA AUDITORÍA TERRITORIAL O CUANDO EL USUARIO PREGUNTA POR UNA COMUNA.
+        Busca todos los colegios de una comuna y cruza el panorama general con el Censo 2024.
+        """
+        comuna_norm = normalizar_texto_chile(nombre_comuna)
+        df_auditoria = dfs.get("Auditoría Final")
+        
+        if df_auditoria is None:
+            return json.dumps({"error": "La tabla 'Auditoría Final' no está cargada."})
+            
+        mask = df_auditoria['COMUNA'].apply(normalizar_texto_chile) == comuna_norm
+        colegios_comuna = df_auditoria[mask]
+        
+        if colegios_comuna.empty:
+            return json.dumps({"error": f"No se encontraron colegios para la comuna '{nombre_comuna}'."})
+        
+        colegios_recientes = colegios_comuna.sort_values('Anio').groupby('RBD').last().reset_index()
+        top_criticos = colegios_recientes.sort_values(by='Ratio_Alumnos_Docente', ascending=False).head(3)
+        lista_criticos = top_criticos[['Nombre_Colegio', 'RBD', 'Ratio_Alumnos_Docente']].to_dict('records')
+        
+        cut_comuna = float(colegios_recientes['CUT'].iloc[0])
+        
+        # 🔴 IMPLEMENTACIÓN DEL PERFIL CENSAL MULTIDIMENSIONAL
+        datos_censo = obtener_perfil_censal(cut_comuna, dfs)
+
+        resultado = {
+            "territorio_auditado": comuna_norm,
+            "total_colegios_activos": len(colegios_recientes),
+            "alertas_sobrecarga_docente_top3": lista_criticos,
+            "contexto_social_censo_2024": datos_censo,
+            "instruccion_para_ia": "Informa al usuario este panorama general y pregúntale si quiere ver el detalle de alguno de los colegios críticos mencionando su RBD."
+        }
+        return json.dumps(resultado)
+
+    @tool
+    def analizar_colegio_y_entorno(rbd: int) -> str:
+        """
+        ÚTIL SIEMPRE QUE EL USUARIO PREGUNTE POR EL RENDIMIENTO O CONTEXTO DE UN COLEGIO ESPECÍFICO.
+        Requiere el RBD numérico del colegio. Cruza rendimiento histórico con demografía del Censo 2024.
+        """
+        df_auditoria = dfs.get("Auditoría Final")
+        if df_auditoria is None: return json.dumps({"error": "La tabla 'Auditoría Final' no está cargada."})
+        
+        colegio = df_auditoria[df_auditoria['RBD'].astype(float) == float(rbd)]
+        if colegio.empty:
+            return json.dumps({"error": f"No se encontró ningún colegio con el RBD {rbd}"})
+        
+        colegio_reciente = colegio.sort_values(by='Anio', ascending=False).iloc[0]
+        cut_comuna = float(colegio_reciente['CUT'])
+        
+        # 🔴 IMPLEMENTACIÓN DEL PERFIL CENSAL MULTIDIMENSIONAL
+        datos_censo = obtener_perfil_censal(cut_comuna, dfs)
+
+        resultado = {
+            "colegio": {
+                "nombre": colegio_reciente['Nombre_Colegio'],
+                "rbd": int(rbd),
+                "comuna": colegio_reciente['COMUNA'],
+                "coordenadas": [float(colegio_reciente['LATITUD']), float(colegio_reciente['LONGITUD'])]
+            },
+            "metricas_educativas": {
+                "anio_registro": int(colegio_reciente['Anio']),
+                "total_alumnos": float(colegio_reciente['Total_Alumnos']),
+                "ratio_alumnos_por_docente": float(colegio_reciente['Ratio_Alumnos_Docente']),
+                "promedio_notas": float(colegio_reciente['Promedio_Notas']),
+                "volatilidad_historica": float(colegio_reciente['Volatilidad_Rendimiento'])
+            },
+            "contexto_barrial_censo_2024": datos_censo
+        }
+        return json.dumps(resultado)
+
+    @tool
+    def analizar_trayectoria_historica(rbd: int) -> str:
+        """
+        ÚTIL CUANDO EL USUARIO PREGUNTA POR LA EVOLUCIÓN, HISTORIA O TENDENCIA DE UN COLEGIO EN EL TIEMPO.
+        Devuelve el rendimiento y métricas del colegio año por año desde 2012 hasta 2024.
+        """
+        df_auditoria = dfs.get("Auditoría Final")
+        if df_auditoria is None: return json.dumps({"error": "La tabla 'Auditoría Final' no está cargada."})
+        
+        colegio_hist = df_auditoria[df_auditoria['RBD'].astype(float) == float(rbd)].sort_values('Anio')
+        if colegio_hist.empty:
+            return json.dumps({"error": f"No hay historial para el RBD {rbd}"})
+            
+        trayectoria = colegio_hist[['Anio', 'Total_Alumnos', 'Ratio_Alumnos_Docente', 'Promedio_Notas']].to_dict('records')
+        
+        primer_registro = trayectoria[0]
+        ultimo_registro = trayectoria[-1]
+        variacion_notas = round(ultimo_registro['Promedio_Notas'] - primer_registro['Promedio_Notas'], 2)
+        
+        resultado = {
+            "colegio": colegio_hist['Nombre_Colegio'].iloc[0],
+            "periodo_registrado": f"{primer_registro['Anio']} al {ultimo_registro['Anio']}",
+            "variacion_total_notas": variacion_notas,
+            "linea_de_tiempo_anual": trayectoria,
+            "instruccion_para_ia": "Analiza la tendencia en 'linea_de_tiempo_anual'. Detecta en qué año hubo caídas abruptas de notas y verifica si coinciden con un aumento repentino en el 'Ratio_Alumnos_Docente'."
+        }
+        return json.dumps(resultado)
+
     indice_semantico_tablas = construir_indice_tablas(dfs)
     buscar_tablas_en_datamart = crear_tool_busqueda_hibrida(dfs, indice_semantico_tablas)
 
-    herramientas = [ejecutar_pandas, buscar_tablas_en_datamart]
+    herramientas = [
+        ejecutar_pandas, 
+        buscar_tablas_en_datamart, 
+        escanear_comuna_educativa, 
+        analizar_colegio_y_entorno, 
+        analizar_trayectoria_historica
+    ]
+    
     rag_tool = get_rag_tool()
     if rag_tool:
         herramientas.append(rag_tool)
@@ -288,20 +487,23 @@ def create_surdao_agent(dfs: dict):
 
 ## 🔧 HERRAMIENTAS DISPONIBLES
 1. **`buscar_tablas_en_datamart(palabra_clave)`** → Úsala primero para encontrar las tablas relevantes según el tema o comuna.
-2. **`ejecutar_pandas(codigo)`** → Obligatoria para extraer las cifras reales. Empieza con `df = dfs["Nombre EXACTO"]`.
+2. **`ejecutar_pandas(codigo)`** → Obligatoria para extraer las cifras reales de tablas complejas. Empieza con `df = dfs["Nombre EXACTO"]`.
 3. **`consultar_manual_censo(query)`** → Solo para definiciones metodológicas o fórmulas.
+4. **`escanear_comuna_educativa(nombre_comuna)`** → Úsala para iniciar auditorías territoriales y obtener un panorama general de los colegios de una comuna cruzados con el Censo.
+5. **`analizar_colegio_y_entorno(rbd)`** → Úsala para analizar un colegio específico (por su RBD) cruzado con su entorno social y comunal.
+6. **`analizar_trayectoria_historica(rbd)`** → Úsala para ver la evolución y tendencia anual de un colegio (notas vs carga docente) a lo largo del tiempo.
 
 ## ⚠️ REGLAS ESTRICTAS Y METODOLÓGICAS (MANUAL CENSO 2024)
-1. **PROHIBIDO SER UN AGENTE VAGO:** Si usas `buscar_tablas_en_datamart`, TIENES PROHIBIDO limitarte a mostrar nombres de tablas al usuario. Debes invocar inmediatamente `ejecutar_pandas` para extraer los números y presentar las cifras reales.
-2. **CERO INVENTOS:** Si un dato no está en el datamart, di "No disponible". Está prohibido usar datos de ejemplo.
+1. **PROHIBIDO SER UN AGENTE VAGO:** Si usas una herramienta de búsqueda, TIENES PROHIBIDO limitarte a mostrar nombres. Debes invocar inmediatamente la herramienta correcta para extraer los números y presentar las cifras reales.
+2. **CERO INVENTOS:** Si un dato no está en el datamart o la herramienta devuelve un error, di "No disponible". Está prohibido usar datos de ejemplo.
 3. **Manejo de Valores Especiales:** Antes de promediar o sumar, DEBES excluir los valores especiales: `-99` (No responde), `-66` (Suprimido por anonimización) y `NA` (No aplica).
 4. **Cálculo de Proporciones:** Excluye siempre los casos de "No respuesta" (`-99`) del denominador.
-5. **FILTRADO OBLIGATORIO DE TEXTOS:** ES OBLIGATORIO usar la función auxiliar `normalizar()` en AMBOS lados de la igualdad al filtrar columnas de texto como comunas. 
-Ejemplo correcto: `df[df['comuna'].apply(normalizar) == normalizar('Isla de Maipo')]`. 
-Si no usas `normalizar()`, fallarás en encontrar los datos. Respeta y conserva siempre la letra `ñ` (ej: `ñuñoa`).
-6. **Filtro de Sexo y Totales:** Las tablas demográficas separan las filas por `sexo` ("Total", "Hombre", "Mujer"). NUNCA sumes sin filtrar antes explícitamente `df[df['sexo'] == 'Total']` (o equivalente) para evitar duplicar población.
+5. **FILTRADO OBLIGATORIO DE TEXTOS:** ES OBLIGATORIO usar la función auxiliar `normalizar()` en AMBOS lados de la igualdad al filtrar columnas de texto como comunas. Respeta y conserva siempre la letra `ñ`.
+6. **Filtro de Sexo y Totales:** Las tablas demográficas separan las filas por `sexo`. NUNCA sumes sin filtrar antes explícitamente `df[df['sexo'] == 'Total']` (o equivalente) para evitar duplicar población.
 7. **Redondeo:** Todos los indicadores y promedios finales deben presentarse redondeados a un (1) decimal.
-8. **PROHIBIDO MODIFICAR DATOS:** Tienes ESTRICTAMENTE PROHIBIDO usar `inplace=True`, borrar columnas originales, o modificar el diccionario `dfs`. Trabaja siempre creando nuevas variables temporales o copias.
+8. **PROHIBIDO MODIFICAR DATOS:** Tienes ESTRICTAMENTE PROHIBIDO usar `inplace=True`, borrar columnas originales, o modificar el diccionario `dfs`.
+9. **REGLA CRÍTICA PARA EL USO DE PANDAS:** Cuando uses la herramienta `ejecutar_pandas` para mostrar datos de un DataFrame, NUNCA uses `print(df)` ni `df.to_string()`. SIEMPRE debes usar `print(df.to_dict(orient='records'))`. Es obligatorio para evitar el desfase y alucinación de columnas.
+10. MICRODATOS VS TABLAS AGREGADAS: Si consultas el manual del Censo y muestra fórmulas en código R con valores numéricos (ej. Sexo 1=Hombre, 2=Mujer), recuerda que tus tablas del datamart ya están procesadas con texto. Adapta cualquier fórmula del manual usando los valores de texto reales de las columnas ('Hombre', 'Mujer', 'Total').
 
 ## 📋 REGLAS DE FORMATO PARA RESPUESTAS (OBLIGATORIO)
 ### 🔹 1. Resumen ejecutivo (máximo 3 líneas)
